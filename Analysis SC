@@ -1,0 +1,131 @@
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# ===============================
+# 1) Load CSV
+# ===============================
+csv_path = r"C:\Users\Nivedidha.Kumaravelu\OneDrive - UKBIC LTD\Desktop\C00-PCH-23002-C-16-05.csv"
+df = pd.read_csv(csv_path, encoding='utf-8', low_memory=False)
+
+# ===============================
+# 2) Identify Y columns
+# ===============================
+y_cols = [c for c in df.columns if isinstance(c, str) and c.strip().startswith('Y')]
+df[y_cols] = df[y_cols].apply(pd.to_numeric, errors='coerce')
+
+# ===============================
+# 3) Row-wise average (avoid fragmentation)
+# ===============================
+new_cols = pd.DataFrame({
+    'Y_row_avg': df[y_cols].mean(axis=1, skipna=True),
+})
+new_cols['Y_row_avg_smooth'] = new_cols['Y_row_avg'].ewm(alpha=0.1).mean()
+df = pd.concat([df, new_cols], axis=1)
+
+# ===============================
+# 4) Column-wise averages (dynamic CD zone width)
+# ===============================
+col_avgs = df[y_cols].mean(axis=0, skipna=True)
+col_avgs_df = col_avgs.reset_index()
+col_avgs_df.columns = ['Y_column', 'Y_column_avg']
+
+n_cols = len(col_avgs_df)
+cd_zone_width_mm = df["CD zone width (mm)"].max() if "CD zone width (mm)" in df.columns else n_cols
+col_avgs_df['CD_pos_mm'] = np.linspace(0, cd_zone_width_mm, n_cols)
+
+# ===============================
+# 5) Prepare datetime for plotting
+# ===============================
+if 'datetime' not in df.columns:
+    df['datetime'] = pd.to_datetime(
+        df['Date (YYYY-MM-DD)'].astype(str) + ' ' + df['Time (HH:mm:ss)'].astype(str),
+        errors='coerce'
+    )
+df = df.dropna(subset=['datetime'])
+
+# ===============================
+# 6) Min/Max for CD profile
+# ===============================
+col_mins = df[y_cols].min(axis=0, skipna=True).reset_index(drop=True)
+col_maxs = df[y_cols].max(axis=0, skipna=True).reset_index(drop=True)
+
+# LSL / USL
+LSL = 446.88
+USL = 465.12
+
+# ===============================
+# 7) Create subplots (2 rows, 1 column), CD first
+# ===============================
+fig = make_subplots(
+    rows=2, cols=1,
+    subplot_titles=("Cross-web CD Profile", "Time over Avg GSM"),
+    vertical_spacing=0.2
+)
+
+# --------------------------
+# Row 1: CD Profile
+# --------------------------
+avg_val = col_avgs_df['Y_column_avg'].mean()
+fig.add_trace(go.Scatter(
+    x=col_avgs_df['CD_pos_mm'], y=col_avgs_df['Y_column_avg'],
+    mode='lines+markers',
+    name=f"Avg ({avg_val:.2f})",
+    line=dict(width=3, color="blue"), marker=dict(size=6)
+), row=1, col=1)
+
+min_val = col_mins.mean()
+fig.add_trace(go.Scatter(
+    x=col_avgs_df['CD_pos_mm'], y=col_mins,
+    mode='lines+markers',
+    name=f"Min ({min_val:.2f})",
+    line=dict(width=2, color="green", dash="dot"), marker=dict(size=4)
+), row=1, col=1)
+
+max_val = col_maxs.mean()
+fig.add_trace(go.Scatter(
+    x=col_avgs_df['CD_pos_mm'], y=col_maxs,
+    mode='lines+markers',
+    name=f"Max ({max_val:.2f})",
+    line=dict(width=2, color="red", dash="dot"), marker=dict(size=4)
+), row=1, col=1)
+
+# LSL / USL for CD profile
+fig.add_hline(y=LSL, line_dash="dash", line_color="green",
+              annotation_text="LSL", annotation_position="bottom left", row=1, col=1)
+fig.add_hline(y=USL, line_dash="dash", line_color="red",
+              annotation_text="USL", annotation_position="top left", row=1, col=1)
+
+# --------------------------
+# Row 2: Time-based Y
+# --------------------------
+fig.add_trace(go.Scatter(
+    x=df['datetime'], y=df['Y_row_avg'],
+    mode='lines', name='Row Avg',
+    line=dict(color='blue', width=2)
+), row=2, col=1)
+
+# LSL / USL for time-based plot
+fig.add_hline(y=LSL, line_dash="dash", line_color="green",
+              annotation_text="LSL", annotation_position="bottom left", row=2, col=1)
+fig.add_hline(y=USL, line_dash="dash", line_color="red",
+              annotation_text="USL", annotation_position="top left", row=2, col=1)
+
+# --------------------------
+# Layout settings
+# --------------------------
+fig.update_layout(
+    height=900,
+    title_text="Coatweight C00-PCH-230002-A-09-07",
+    hovermode="x unified",
+)
+
+fig.update_xaxes(title_text="Distance across the web (mm)", row=1, col=1)
+fig.update_yaxes(title_text="Profile Avg (gsm)", row=1, col=1)
+fig.update_xaxes(title_text="Time", row=2, col=1)
+fig.update_yaxes(title_text="Profile Avg (gsm)", row=2, col=1)
+
+fig.show(renderer="browser")
+
+print("✅ Plots generated successfully.")
